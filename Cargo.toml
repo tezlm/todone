@@ -1,0 +1,11 @@
+[package]
+edition = "2021"
+name = "todone"
+version = "0.1.0"
+
+[dependencies]
+crossterm = "*"
+tui = { version = "*", features = ["crossterm"] }
+tui-input = "*"
+serde = { version = "*", features = ["derive"] }
+serde_json = "*"
