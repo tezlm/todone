@@ -4,11 +4,23 @@ use crossterm::execute;
 use serde::{Serialize, Deserialize};
 use tui::{Terminal, backend::CrosstermBackend};
 use tui::{widgets::*, layout::*};
+use tui_input::{Input, InputResponse};
 use std::{io, fs};
 
 const TODO_PATH: &str = ".todos";
 
 type Term = Terminal<CrosstermBackend<io::Stdout>>;
+
+#[derive(PartialEq)]
+enum InputState { Normal, Insert }
+
+// TODO: use a struct for everything
+// struct App {
+//     state: InputState,
+//     input: Option<Input>,
+//     cursor: usize,
+//     items: Vec<TodoItem>,
+// }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TodoItem {
@@ -24,7 +36,23 @@ impl TodoItem {
             .fold(1, |a, i| a + i.len())
     }
 
-    fn remove(&mut self, index: usize, a: bool) -> bool {
+    // fn get(&self, index: usize) -> Option<&TodoItem> {
+    //     let mut i = 0;
+    //     let mut pos = 0;
+    //     for item in &self.req {
+    //         if pos == index { 
+    //             return Some(&self.req[i])
+    //         }
+    //         if let Some(thing) = item.get(index - i - 1) {
+    //             return Some(thing);
+    //         }
+    //         i += 1;
+    //         pos += item.len();
+    //     }
+    //     None
+    // }
+
+    fn remove(&mut self, index: usize) -> bool {
         let mut i = 0;
         let mut pos = 0;
         for item in &mut self.req {
@@ -32,7 +60,7 @@ impl TodoItem {
                 self.req.remove(i);
                 return true;
             }
-            if item.remove(index - i - 1, true) {
+            if item.remove(index - i - 1) {
                 return true
             }
             i += 1;
@@ -110,45 +138,70 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let items: Vec<TodoItem> = serde_json::from_str(&items)?;
     let mut items = TodoItem { done: false, name: "dummy".into(), req: items };
     let mut selected: usize = 0;
+    let mut state = InputState::Normal;
+    let mut input = Input::default();
 
     loop {
         terminal.draw(|rect| {
             let size = rect.size();
+            let lsize = match state {
+                InputState::Normal => size,
+                _ => {
+                    let isize = Rect { height: 3, ..size };
+                    let input = Paragraph::new(input.value()).block(Block::default().borders(Borders::all()));
+                    rect.render_widget(input, isize);
+                    Rect { y: 3, height: size.height - 3, ..size }
+                },
+            };
             if items.len() > 0 {
                 let list = List::new(render_items(&items.req, 0))
                     .highlight_symbol("> ");
-
                 let mut state = ListState::default();
                 state.select(Some(selected));
-                rect.render_stateful_widget(list, size, &mut state);
+                rect.render_stateful_widget(list, lsize, &mut state);
             } else {
-                rect.render_widget(Paragraph::new("no items!"), size);
+                rect.render_widget(Paragraph::new("no items!"), lsize);
             }
         })?;
-
         let event = read()?;
-        if let Event::Key(KeyEvent { code, .. }) = event {
-            match code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char('a') => {
-                    items.req.push(TodoItem { name: "arst".into(), done: false, req: vec![] });
-                },
-                KeyCode::Char('e') => {},
-                KeyCode::Char('d') => {
-                    items.remove(selected, false);
-                    // selected = selected.min(items.len().saturating_sub(1));
-                },
-                KeyCode::Char('x') => { 
-                    items.req[selected].done ^= true;
-                    write(&items.req)?;
-                },
-                KeyCode::Up        => selected = selected.saturating_sub(1),
-                KeyCode::Down      => selected = selected.saturating_add(1).min(items.len().saturating_sub(2)),
-                KeyCode::Char('?') => {
-                    help(&mut terminal)?;
-                    read()?;
-                },
-                _ => {},
+        if state == InputState::Normal {
+            if let Event::Key(KeyEvent { code, .. }) = event {
+                match code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Char('a') => {
+                        input = Input::default();
+                        state = InputState::Insert;
+                    },
+                    KeyCode::Char('e') => {},
+                    KeyCode::Char('d') => {
+                        items.remove(selected);
+                        selected = selected.min(items.len().saturating_sub(1));
+                    },
+                    KeyCode::Char('x') => { 
+                        items.req[selected].done ^= true;
+                        write(&items.req)?;
+                    },
+                    KeyCode::Up        => selected = selected.saturating_sub(1),
+                    KeyCode::Down      => selected = selected.saturating_add(1).min(items.len().saturating_sub(2)),
+                    KeyCode::Char('?') => {
+                        help(&mut terminal)?;
+                        read()?;
+                    },
+                    _ => {},
+                }
+            }
+        } else {
+            if let Some(res) = tui_input::backend::crossterm::to_input_request(event).and_then(|r| input.handle(r)) {
+                match res {
+                    InputResponse::Submitted => {
+                        items.req.push(TodoItem { name: input.value().to_string(), done: false, req: vec![] });
+                        state = InputState::Normal
+                    },
+                    InputResponse::Escaped => {
+                        state = InputState::Normal
+                    },
+                    _ => {},
+                };
             }
         }
     }
