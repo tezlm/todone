@@ -1,10 +1,10 @@
-use crossterm::event::{read, Event, KeyEvent, KeyCode};
-use crossterm::terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::event::{read as input, Event, KeyCode};
+use crossterm::terminal::*;
 use crossterm::execute;
 use serde::{Serialize, Deserialize};
-use tui::{Terminal, backend::CrosstermBackend};
+use tui::{Terminal, Frame, backend::CrosstermBackend};
 use tui::{widgets::*, layout::*};
-use tui_input::{Input, InputResponse};
+use tui_input::{Input, InputResponse, backend::crossterm::to_input_request};
 use std::{io, fs};
 
 const TODO_PATH: &str = ".todos";
@@ -14,13 +14,12 @@ type Term = Terminal<CrosstermBackend<io::Stdout>>;
 #[derive(PartialEq)]
 enum InputState { Normal, Insert }
 
-// TODO: use a struct for everything
-// struct App {
-//     state: InputState,
-//     input: Option<Input>,
-//     cursor: usize,
-//     items: Vec<TodoItem>,
-// }
+struct App {
+    state: InputState,
+    input: Option<Input>,
+    cursor: usize,
+    items: Vec<TodoItem>,
+}
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TodoItem {
@@ -29,35 +28,52 @@ struct TodoItem {
     req: Vec<TodoItem>,
 }
 
-impl TodoItem {
+trait Recursive {
+    fn items(&self) -> &Vec<TodoItem>;
+    fn items_mut(&mut self) -> &mut Vec<TodoItem>;
+
     fn len(&self) -> usize {
-        self.req
+        self.items()
             .iter()
             .fold(1, |a, i| a + i.len())
     }
 
-    // fn get(&self, index: usize) -> Option<&TodoItem> {
-    //     let mut i = 0;
-    //     let mut pos = 0;
-    //     for item in &self.req {
-    //         if pos == index { 
-    //             return Some(&self.req[i])
-    //         }
-    //         if let Some(thing) = item.get(index - i - 1) {
-    //             return Some(thing);
-    //         }
-    //         i += 1;
-    //         pos += item.len();
-    //     }
-    //     None
-    // }
+    fn get(&self, index: usize) -> Option<&TodoItem> {
+        let mut pos = 0;
+        for item in self.items().iter() {
+            if index == pos {
+                return Some(&item);
+            }
+            pos += item.len();
+
+            if let Some(got) = item.get(index) {
+                return Some(got);
+            }
+        }
+        None
+    }
+
+    fn get_mut(&mut self, index: usize) -> Option<&mut TodoItem> {
+        let mut pos = 0;
+        for item in self.items_mut().iter_mut() {
+            if index == pos {
+                return Some(item);
+            }
+            pos += item.len();
+           
+            if let Some(got) = item.get_mut(index) {
+                return Some(got);
+            }
+        }
+        None
+    }
 
     fn remove(&mut self, index: usize) -> bool {
         let mut i = 0;
         let mut pos = 0;
-        for item in &mut self.req {
+        for item in self.items_mut() {
             if pos == index { 
-                self.req.remove(i);
+                self.items_mut().remove(i);
                 return true;
             }
             if item.remove(index - i - 1) {
@@ -67,6 +83,124 @@ impl TodoItem {
             pos += item.len();
         }
         false
+    }
+}
+
+impl Recursive for TodoItem {
+    fn items(&self) -> &Vec<TodoItem> { &self.req }
+    fn items_mut(&mut self) -> &mut Vec<TodoItem> { &mut self.req }
+}
+
+impl Recursive for App {
+    fn items(&self) -> &Vec<TodoItem> { &self.items }
+    fn items_mut(&mut self) -> &mut Vec<TodoItem> { &mut self.items }
+}
+
+impl App {
+    fn get_terminal(&self) -> Term {
+        let stdout = io::stdout();
+        let backend = CrosstermBackend::new(stdout);
+        Terminal::new(backend).expect("init terminal")
+    }
+
+    fn ui<B: tui::backend::Backend>(&self, f: &mut Frame<B>) {
+        let size = f.size();
+        let list_size = match self.state {
+            InputState::Normal => size,
+            _ => Rect { y: 3, height: size.height - 3, ..size },
+        };
+
+        match self.state {
+            InputState::Normal => {},
+            _ => {
+                let input_size = Rect { height: 3, ..size };
+                let input = self.input.as_ref().unwrap().value(); 
+                let input_width = input.len() as u16;
+                let input = Paragraph::new(input.to_owned()).block(Block::default().borders(Borders::all()));
+                f.render_widget(input, input_size);
+                f.set_cursor(1 + input_width, 1);
+            },
+        };
+        
+        if self.len() > 0 {
+            let list = List::new(render_items(&self.items, 0))
+                .highlight_symbol("> ");
+            let mut state = ListState::default();
+            state.select(Some(self.cursor));
+            f.render_stateful_widget(list, list_size, &mut state);
+        } else {
+            f.render_widget(Paragraph::new("no items!"), list_size);
+        }
+    }
+
+    pub fn default() -> Self {
+        Self {
+            input: None,
+            cursor: 0,
+            state: InputState::Normal,
+            items: Vec::new(),
+        }
+    }
+
+    pub fn init(&mut self) {
+        enable_raw_mode().expect("can run in raw mode");
+        execute!(io::stdout(), EnterAlternateScreen).expect("enter alternate screen");
+        self.items = read();
+    }
+
+    pub fn run(&mut self) {
+        let mut terminal = self.get_terminal();
+                            terminal.show_cursor().unwrap();
+        loop {
+            terminal.draw(|frame| self.ui(frame)).unwrap();
+            let event = input().expect("read input");
+            if self.state == InputState::Normal {
+                if let Event::Key(key) = event {
+                    match key.code {
+                        KeyCode::Char('q') => break,
+                        KeyCode::Char('a') => {
+                            self.input = Some(Input::default());
+                            self.state = InputState::Insert;
+                        },
+                        KeyCode::Char('e') => {},
+                        KeyCode::Char('d') => {
+                            self.remove(self.cursor);
+                            self.cursor = self.cursor.min(self.len().saturating_sub(2));
+                        },
+                        KeyCode::Char('x') => { 
+                            self.items[self.cursor].done ^= true;
+                            write(&self.items).expect("write data");
+                        },
+                        KeyCode::Up        => self.cursor = self.cursor.saturating_sub(1),
+                        KeyCode::Down      => self.cursor = self.cursor.saturating_add(1).min(self.len().saturating_sub(2)),
+                        KeyCode::Char('?') => {
+                            help(&mut terminal).expect("render help");
+                            input().expect("read input");
+                        },
+                        _ => {},
+                    }
+                }
+            } else {
+                let input = self.input.as_mut().unwrap();
+                if let Some(res) = to_input_request(event).and_then(|r| input.handle(r)) {
+                    match res {
+                        InputResponse::Submitted => {
+                            self.items.push(TodoItem { name: input.value().to_string(), done: false, req: vec![] });
+                            self.state = InputState::Normal;
+                        },
+                        InputResponse::Escaped => {
+                            self.state = InputState::Normal;
+                        },
+                        _ => {},
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn cleanup(&self) {
+        execute!(io::stdout(), LeaveAlternateScreen).expect("leave alternate screen");
+        disable_raw_mode().expect("disable raw mode");
     }
 }
 
@@ -126,88 +260,15 @@ fn write(items: &Vec<TodoItem>) -> Result<(), io::Error> {
     Ok(())
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    enable_raw_mode().expect("can run in raw mode");
-    execute!(io::stdout(), EnterAlternateScreen)?;
-
-    let stdout = io::stdout();
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
+fn read() -> Vec<TodoItem> {
     let items = fs::read_to_string(TODO_PATH).unwrap_or("[]".into());
-    let items: Vec<TodoItem> = serde_json::from_str(&items)?;
-    let mut items = TodoItem { done: false, name: "dummy".into(), req: items };
-    let mut selected: usize = 0;
-    let mut state = InputState::Normal;
-    let mut input = Input::default();
+    serde_json::from_str(&items).expect("parse json")
+}
 
-    loop {
-        terminal.draw(|rect| {
-            let size = rect.size();
-            let lsize = match state {
-                InputState::Normal => size,
-                _ => {
-                    let isize = Rect { height: 3, ..size };
-                    let input = Paragraph::new(input.value()).block(Block::default().borders(Borders::all()));
-                    rect.render_widget(input, isize);
-                    Rect { y: 3, height: size.height - 3, ..size }
-                },
-            };
-            if items.len() > 0 {
-                let list = List::new(render_items(&items.req, 0))
-                    .highlight_symbol("> ");
-                let mut state = ListState::default();
-                state.select(Some(selected));
-                rect.render_stateful_widget(list, lsize, &mut state);
-            } else {
-                rect.render_widget(Paragraph::new("no items!"), lsize);
-            }
-        })?;
-        let event = read()?;
-        if state == InputState::Normal {
-            if let Event::Key(KeyEvent { code, .. }) = event {
-                match code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('a') => {
-                        input = Input::default();
-                        state = InputState::Insert;
-                    },
-                    KeyCode::Char('e') => {},
-                    KeyCode::Char('d') => {
-                        items.remove(selected);
-                        selected = selected.min(items.len().saturating_sub(1));
-                    },
-                    KeyCode::Char('x') => { 
-                        items.req[selected].done ^= true;
-                        write(&items.req)?;
-                    },
-                    KeyCode::Up        => selected = selected.saturating_sub(1),
-                    KeyCode::Down      => selected = selected.saturating_add(1).min(items.len().saturating_sub(2)),
-                    KeyCode::Char('?') => {
-                        help(&mut terminal)?;
-                        read()?;
-                    },
-                    _ => {},
-                }
-            }
-        } else {
-            if let Some(res) = tui_input::backend::crossterm::to_input_request(event).and_then(|r| input.handle(r)) {
-                match res {
-                    InputResponse::Submitted => {
-                        items.req.push(TodoItem { name: input.value().to_string(), done: false, req: vec![] });
-                        state = InputState::Normal
-                    },
-                    InputResponse::Escaped => {
-                        state = InputState::Normal
-                    },
-                    _ => {},
-                };
-            }
-        }
-    }
-
-    execute!(io::stdout(), LeaveAlternateScreen)?;
-    disable_raw_mode()?;
-    Ok(())
+fn main() {
+    let mut app = App::default();
+    app.init();
+    app.run();
+    app.cleanup();
 }
 
