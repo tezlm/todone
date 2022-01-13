@@ -30,70 +30,78 @@ struct TodoItem {
 
 trait Recursive {
     fn items(&self) -> &Vec<TodoItem>;
-    fn items_mut(&mut self) -> &mut Vec<TodoItem>;
+    fn mut_items(&mut self) -> &mut Vec<TodoItem>;
 
     fn len(&self) -> usize {
-        self.items()
-            .iter()
-            .fold(1, |a, i| a + i.len())
+        1 + self.items().iter().fold(0, |sum, i| sum + i.len())
     }
 
     fn get(&self, index: usize) -> Option<&TodoItem> {
         let mut pos = 0;
-        for item in self.items().iter() {
-            if index == pos {
-                return Some(&item);
+        for i in self.items() {
+            if pos == index {
+                return Some(&i);
             }
-            pos += item.len();
-
-            if let Some(got) = item.get(index) {
-                return Some(got);
+            
+            let len = i.len();
+            pos += len - 1;
+            
+            let found = i.get(index.saturating_sub(pos));
+            if found.is_some() {
+                return found;
             }
+            pos += 1;
         }
         None
     }
 
-    fn get_mut(&mut self, index: usize) -> Option<&mut TodoItem> {
+    fn mut_get(&mut self, index: usize) -> Option<&mut TodoItem> {
         let mut pos = 0;
-        for item in self.items_mut().iter_mut() {
-            if index == pos {
-                return Some(item);
+        for i in self.mut_items() {
+            if pos == index {
+                return Some(i);
             }
-            pos += item.len();
            
-            if let Some(got) = item.get_mut(index) {
-                return Some(got);
+            let len = i.len();
+            pos += len - 1;
+            
+            let found = i.mut_get(index.saturating_sub(pos));
+            if found.is_some() {
+                return found;
             }
+            pos += 1;
         }
         None
     }
 
     fn remove(&mut self, index: usize) -> bool {
-        let mut i = 0;
         let mut pos = 0;
-        for item in self.items_mut() {
-            if pos == index { 
-                self.items_mut().remove(i);
+        for (i, node) in self.mut_items().iter_mut().enumerate() {
+            if pos == index {
+                self.mut_items().remove(i);
                 return true;
             }
-            if item.remove(index - i - 1) {
-                return true
+           
+            let len = node.len();
+            pos += len - 1;
+            
+            if node.remove(index.saturating_sub(pos)) {
+                return true;
             }
-            i += 1;
-            pos += item.len();
+            pos += 1;
         }
-        false
+        return false;
     }
 }
 
 impl Recursive for TodoItem {
     fn items(&self) -> &Vec<TodoItem> { &self.req }
-    fn items_mut(&mut self) -> &mut Vec<TodoItem> { &mut self.req }
+    fn mut_items(&mut self) -> &mut Vec<TodoItem> { &mut self.req }
 }
 
 impl Recursive for App {
     fn items(&self) -> &Vec<TodoItem> { &self.items }
-    fn items_mut(&mut self) -> &mut Vec<TodoItem> { &mut self.items }
+    fn mut_items(&mut self) -> &mut Vec<TodoItem> { &mut self.items }
 }
 
 impl App {
@@ -121,8 +129,8 @@ impl App {
                 f.set_cursor(1 + input_width, 1);
             },
         };
-        
-        if self.len() > 0 {
+
+        if self.len() > 1 {
             let list = List::new(render_items(&self.items, 0))
                 .highlight_symbol("> ");
             let mut state = ListState::default();
@@ -150,7 +158,7 @@ impl App {
 
     pub fn run(&mut self) {
         let mut terminal = self.get_terminal();
-                            terminal.show_cursor().unwrap();
+        terminal.show_cursor().unwrap();
         loop {
             terminal.draw(|frame| self.ui(frame)).unwrap();
             let event = input().expect("read input");
@@ -168,7 +176,7 @@ impl App {
                             self.cursor = self.cursor.min(self.len().saturating_sub(2));
                         },
                         KeyCode::Char('x') => { 
-                            self.items[self.cursor].done ^= true;
+                            self.mut_get(self.cursor).unwrap().done ^= true;
                             write(&self.items).expect("write data");
                         },
                         KeyCode::Up        => self.cursor = self.cursor.saturating_sub(1),
