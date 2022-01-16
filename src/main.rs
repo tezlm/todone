@@ -99,19 +99,6 @@ impl Recursive for App {
 }
 
 impl App {
-    fn ui(&self) {
-        // f.set_cursor(1 + input_width, 1);
-
-        if self.len() > 1 {
-            // let list = List::new(render_items(&self.items, 0))
-            //     .highlight_symbol("> ");
-            // state.select(Some(self.cursor));
-            self.terminal.write(&render_items(&self.items(), 0));
-        } else {
-            self.terminal.write("no items!");
-        }
-    }
-
     pub fn default() -> Self {
         Self {
             terminal: Terminal::new(),
@@ -119,6 +106,63 @@ impl App {
             state: InputState::Normal,
             items: Vec::new(),
         }
+    }
+
+    fn ui(&self) {
+        if self.state != InputState::Normal {
+            // f.set_cursor(1 + input_width, 1);
+        }
+
+        if self.len() > 1 {
+            self.terminal.write(&render_items(&self.items(), 1));
+            self.terminal.write_at("> ", (0, self.cursor as u16));
+            self.terminal.flush();
+        } else {
+            self.terminal.write("no items!");
+            self.terminal.flush();
+        }
+    }
+
+    fn input(&mut self, key: Key) {
+        // if self.state == InputState::Normal {
+        match key {
+            Key::Char('a') => {
+                // self.input = Some(Input::default());
+                // self.state = InputState::Append;
+            },
+            // Key::Char('i') => {
+            //     self.input = Some(Input::default());
+            //     self.state = InputState::Insert;
+            // },
+            Key::Char('e') => {},
+            Key::Char('d') => {
+                self.remove(self.cursor);
+                self.cursor = self.cursor.min(self.len().saturating_sub(2));
+            },
+            Key::Char('x') => { 
+                self.mut_get(self.cursor).unwrap().done ^= true;
+                write(&self.items).expect("write data");
+            },
+            Key::Up        => self.cursor = self.cursor.saturating_sub(1),
+            Key::Down      => self.cursor = self.cursor.saturating_add(1).min(self.len().saturating_sub(2)),
+            _ => {},
+
+        }
+        // } else {
+        //     let input = self.input.as_mut().unwrap();
+        //     if let Some(res) = to_input_request(event).and_then(|r| input.handle(r)) {
+        //         match res {
+        //             InputResponse::Submitted => {
+        //                 self.items.push(TodoItem { name: input.value().to_string(), done: false, req: vec![] });
+        //                 self.state = InputState::Normal;
+        //             },
+        //             InputResponse::Escaped => {
+        //                 self.state = InputState::Normal;
+        //             },
+        //             _ => {},
+        //         };
+        //     }
+        // }
     }
 
     pub fn run(&mut self) {
@@ -129,50 +173,11 @@ impl App {
             // terminal.draw(|frame| self.ui(frame)).unwrap();
             self.ui();
             if let Some(event) = self.terminal.read() {
-
-                // if self.state == InputState::Normal {
-                match event {
-                    Key::Char('q') => break,
-                    Key::Char('a') => {
-                        // self.input = Some(Input::default());
-                        // self.state = InputState::Append;
-                    },
-                    // Key::Char('i') => {
-                    //     self.input = Some(Input::default());
-                    //     self.state = InputState::Insert;
-                    // },
-                    Key::Char('e') => {},
-                    Key::Char('d') => {
-                        self.remove(self.cursor);
-                        self.cursor = self.cursor.min(self.len().saturating_sub(2));
-                    },
-                    Key::Char('x') => { 
-                        self.mut_get(self.cursor).unwrap().done ^= true;
-                        write(&self.items).expect("write data");
-                    },
-                    Key::Up        => self.cursor = self.cursor.saturating_sub(1),
-                    Key::Down      => self.cursor = self.cursor.saturating_add(1).min(self.len().saturating_sub(2)),
-                    _ => {},
-
-                }
-                // } else {
-                //     let input = self.input.as_mut().unwrap();
-                //     if let Some(res) = to_input_request(event).and_then(|r| input.handle(r)) {
-                //         match res {
-                //             InputResponse::Submitted => {
-                //                 self.items.push(TodoItem { name: input.value().to_string(), done: false, req: vec![] });
-                //                 self.state = InputState::Normal;
-                //             },
-                //             InputResponse::Escaped => {
-                //                 self.state = InputState::Normal;
-                //             },
-                //             _ => {},
-                //         };
-                //     }
-                // }
+                if event == Key::Char('q') { break }
+                self.input(event);
             }
         }
-        self.terminal.disable_raw();
+        self.terminal.drop();
     }
 }
 
@@ -185,14 +190,14 @@ fn state_to_char(state: bool) -> String {
 
 fn render_items(items: &Vec<TodoItem>, depth: usize) -> String {
     fn pad(depth: usize) -> String {
-        format!("{: ^1$}", "", depth * 4)
+        format!("{: ^1$}", "", depth * 2)
     }
 
     let vec: Vec<String> = items
         .iter()
         .map(|i| vec![
              format!("{}[{}] {}\r\n", pad(depth), state_to_char(i.done), i.name),
-             render_items(&i.req, depth + 1),
+             render_items(&i.req, depth + 2),
         ])
         .flatten()
         .collect();
