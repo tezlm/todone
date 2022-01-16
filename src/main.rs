@@ -10,6 +10,7 @@ enum InputState { Normal, Append, Insert, Edit }
 
 struct App {
     state: InputState,
+    input: String,
     terminal: Terminal,
     cursor: usize,
     items: Vec<TodoItem>,
@@ -101,68 +102,91 @@ impl Recursive for App {
 impl App {
     pub fn default() -> Self {
         Self {
+            state: InputState::Normal,
+            input: String::new(),
             terminal: Terminal::new(),
             cursor: 0,
-            state: InputState::Normal,
             items: Vec::new(),
         }
     }
 
     fn ui(&self) {
-        if self.state != InputState::Normal {
-            // f.set_cursor(1 + input_width, 1);
-        }
+        let term = &self.terminal;
+        term.reset();
 
         if self.len() > 1 {
-            self.terminal.write(&render_items(&self.items(), 1));
-            self.terminal.write_at("> ", (0, self.cursor as u16));
-            self.terminal.flush();
+            term.write(&render_items(&self.items(), 1));
         } else {
-            self.terminal.write("no items!");
-            self.terminal.flush();
+            term.write("no items!");
         }
+
+        if self.state != InputState::Normal {
+            let pos = match self.state {
+                InputState::Append => self.items.len() + 1,
+                // InputState::Insert => self.cursor + 1,
+                InputState::Edit   => self.cursor,
+                _ => 0,
+            };
+            term.move_to(2, pos);
+            term.clear_line();
+            term.write(&format!("[ ] {}", self.input));
+        } else if self.len() > 1 {
+            term.move_to(0, self.cursor);
+            term.write("> ");
+        }
+
+        term.flush();
     }
 
     fn input(&mut self, key: Key) {
-        // if self.state == InputState::Normal {
-        match key {
-            Key::Char('a') => {
-                // self.input = Some(Input::default());
-                // self.state = InputState::Append;
-            },
-            // Key::Char('i') => {
-            //     self.input = Some(Input::default());
-            //     self.state = InputState::Insert;
-            // },
-            Key::Char('e') => {},
-            Key::Char('d') => {
-                self.remove(self.cursor);
-                self.cursor = self.cursor.min(self.len().saturating_sub(2));
-            },
-            Key::Char('x') => { 
-                self.mut_get(self.cursor).unwrap().done ^= true;
-                write(&self.items).expect("write data");
-            },
-            Key::Up        => self.cursor = self.cursor.saturating_sub(1),
-            Key::Down      => self.cursor = self.cursor.saturating_add(1).min(self.len().saturating_sub(2)),
-            _ => {},
+        if self.state == InputState::Normal {
+            match key {
+                Key::Char('a') => {
+                    self.input = String::new();
+                    self.terminal.disable_raw();
+                    self.state = InputState::Append;
+                },
+                // Key::Char('i') => {
+                //     self.input = Some(Input::default());
+                //     self.state = InputState::Insert;
+                // },
+                Key::Char('e') => {
+                    self.input = self.items.get(self.cursor).unwrap().name.to_string();
+                    self.terminal.disable_raw();
+                    self.state = InputState::Edit;
+                },
+                Key::Char('d') => {
+                    self.remove(self.cursor);
+                    self.cursor = self.cursor.min(self.len().saturating_sub(2));
+                },
+                Key::Char('x') => { 
+                    self.mut_get(self.cursor).unwrap().done ^= true;
+                    write(&self.items).expect("write data");
+                },
+                Key::Up        => self.cursor = self.cursor.saturating_sub(1),
+                Key::Down      => self.cursor = self.cursor.saturating_add(1).min(self.len().saturating_sub(2)),
+                _ => {},
 
+            };
+        } else {
+            match key {
+                Key::Char(c)   => { self.input.push(c); },
+                Key::Backspace => { self.input.pop(); },
+                Key::Enter | Key::Esc => {
+                    if key == Key::Enter {
+                        let name = self.input.to_string();
+                        match self.state {
+                            InputState::Append => { self.items.push(TodoItem { name, done: false, req: vec![] }); },
+                            InputState::Edit => { self.items.get_mut(self.cursor).unwrap().name = name },
+                            _ => {}
+                        }
+                    }
+                    self.state = InputState::Normal;
+                    self.terminal.enable_raw();
+                },
+                _ => {},
+            };
         }
-        // } else {
-        //     let input = self.input.as_mut().unwrap();
-        //     if let Some(res) = to_input_request(event).and_then(|r| input.handle(r)) {
-        //         match res {
-        //             InputResponse::Submitted => {
-        //                 self.items.push(TodoItem { name: input.value().to_string(), done: false, req: vec![] });
-        //                 self.state = InputState::Normal;
-        //             },
-        //             InputResponse::Escaped => {
-        //                 self.state = InputState::Normal;
-        //             },
-        //             _ => {},
-        //         };
-        //     }
-        // }
     }
 
     pub fn run(&mut self) {

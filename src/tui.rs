@@ -26,6 +26,10 @@ impl Terminal {
         term::disable_raw_mode().expect("leave raw mode");
     }
 
+    pub fn move_to(&self, x: usize, y: usize) {
+        execute!(stdout(), cursor::MoveTo(x as u16, y as u16)).expect("move cursor");
+    }
+
     pub fn read(&self) -> Option<Key> {
         if let Ok(event) = read() {
             match event {
@@ -37,18 +41,20 @@ impl Terminal {
         }
     }
 
-    pub fn write(&self, data: &str) {
+    pub fn reset(&self) {
         execute!(
             stdout(),
             cursor::MoveTo(0, 0),
             term::Clear(term::ClearType::FromCursorDown),
-        ).expect("clear screen");
+        ).expect("reset");
+    }
+
+    pub fn write(&self, data: &str) {
         print!("{}", data);
     }
 
-    pub fn write_at(&self, data: &str, pos: (u16, u16)) {
-        execute!(stdout(), cursor::MoveTo(pos.0, pos.1)).expect("move cursor");
-        print!("{}", data);
+    pub fn clear_line(&self) {
+        execute!(stdout(), term::Clear(term::ClearType::CurrentLine)).expect("clear line");
     }
 
     pub fn flush(&self) {
