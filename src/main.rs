@@ -37,15 +37,14 @@ trait Recursive {
             if pos == index {
                 return Some(&i);
             }
+            pos += 1;
 
             let len = i.len();
-            pos += len - 1;
-
             let found = i.get(index.saturating_sub(pos));
             if found.is_some() {
                 return found;
             }
-            pos += 1;
+            pos += len - 1;
         }
         None
     }
@@ -56,15 +55,14 @@ trait Recursive {
             if pos == index {
                 return Some(i);
             }
+            pos += 1;
 
             let len = i.len();
-            pos += len - 1;
-
             let found = i.mut_get(index.saturating_sub(pos));
             if found.is_some() {
                 return found;
             }
-            pos += 1;
+            pos += len - 1;
         }
         None
     }
@@ -76,14 +74,13 @@ trait Recursive {
                 self.mut_items().remove(i);
                 return true;
             }
+            pos += 1;
 
             let len = node.len();
-            pos += len - 1;
-
             if node.remove(index.saturating_sub(pos)) {
                 return true;
             }
-            pos += 1;
+            pos += len - 1;
         }
         return false;
     }
@@ -122,7 +119,7 @@ impl App {
 
         if self.state != InputState::Normal {
             let pos = match self.state {
-                InputState::Append => self.items.len() + 1,
+                InputState::Append => self.len() - 1,
                 // InputState::Insert => self.cursor + 1,
                 InputState::Edit   => self.cursor,
                 _ => 0,
@@ -145,19 +142,21 @@ impl App {
                     self.input = String::new();
                     self.terminal.disable_raw();
                     self.state = InputState::Append;
+                    write(&self.items).expect("write data");
                 },
                 // Key::Char('i') => {
                 //     self.input = Some(Input::default());
                 //     self.state = InputState::Insert;
                 // },
                 Key::Char('e') => {
-                    self.input = self.items.get(self.cursor).unwrap().name.to_string();
-                    self.terminal.disable_raw();
-                    self.state = InputState::Edit;
+                    // self.input = self.items.get(self.cursor).unwrap().name.to_string();
+                    // self.terminal.disable_raw();
+                    // self.state = InputState::Edit;
                 },
                 Key::Char('d') => {
                     self.remove(self.cursor);
                     self.cursor = self.cursor.min(self.len().saturating_sub(2));
+                    write(&self.items).expect("write data");
                 },
                 Key::Char('x') => { 
                     self.mut_get(self.cursor).unwrap().done ^= true;
