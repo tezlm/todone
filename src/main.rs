@@ -1,6 +1,7 @@
 mod tui;
+mod items;
+use items::{TodoItem, Recursive};
 use tui::{Terminal, Key};
-use serde::{Serialize, Deserialize};
 use std::{io, fs};
 
 const TODO_PATH: &str = ".todos";
@@ -16,84 +17,9 @@ struct App {
     items: Vec<TodoItem>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct TodoItem {
-    name: String,
-    done: bool,
-    req: Vec<TodoItem>,
-}
-
-trait Recursive {
-    fn items(&self) -> &Vec<TodoItem>;
-    fn mut_items(&mut self) -> &mut Vec<TodoItem>;
-
-    fn len(&self) -> usize {
-        1 + self.items().iter().fold(0, |sum, i| sum + i.len())
-    }
-
-    fn get(&self, index: usize) -> Option<&TodoItem> {
-        let mut pos = 0;
-        for i in self.items() {
-            if pos == index {
-                return Some(&i);
-            }
-            pos += 1;
-
-            let len = i.len();
-            let found = i.get(index.saturating_sub(pos));
-            if found.is_some() {
-                return found;
-            }
-            pos += len - 1;
-        }
-        None
-    }
-
-    fn mut_get(&mut self, index: usize) -> Option<&mut TodoItem> {
-        let mut pos = 0;
-        for i in self.mut_items() {
-            if pos == index {
-                return Some(i);
-            }
-            pos += 1;
-
-            let len = i.len();
-            let found = i.mut_get(index.saturating_sub(pos));
-            if found.is_some() {
-                return found;
-            }
-            pos += len - 1;
-        }
-        None
-    }
-
-    fn remove(&mut self, index: usize) -> bool {
-        let mut pos = 0;
-        for (i, node) in self.mut_items().iter_mut().enumerate() {
-            if pos == index {
-                self.mut_items().remove(i);
-                return true;
-            }
-            pos += 1;
-
-            let len = node.len();
-            if node.remove(index.saturating_sub(pos)) {
-                return true;
-            }
-            pos += len - 1;
-        }
-        return false;
-    }
-}
-
-impl Recursive for TodoItem {
-    fn items(&self) -> &Vec<TodoItem> { &self.req }
-    fn mut_items(&mut self) -> &mut Vec<TodoItem> { &mut self.req }
-}
-
 impl Recursive for App {
     fn items(&self) -> &Vec<TodoItem> { &self.items }
-    fn mut_items(&mut self) -> &mut Vec<TodoItem> { &mut self.items }
+    fn items_mut(&mut self) -> &mut Vec<TodoItem> { &mut self.items }
 }
 
 impl App {
@@ -142,7 +68,6 @@ impl App {
                     self.input = String::new();
                     self.terminal.disable_raw();
                     self.state = InputState::Append;
-                    write(&self.items).expect("write data");
                 },
                 // Key::Char('i') => {
                 //     self.input = Some(Input::default());
@@ -159,7 +84,7 @@ impl App {
                     write(&self.items).expect("write data");
                 },
                 Key::Char('x') => { 
-                    self.mut_get(self.cursor).unwrap().done ^= true;
+                    self.get_mut(self.cursor).unwrap().done ^= true;
                     write(&self.items).expect("write data");
                 },
                 Key::Up        => self.cursor = self.cursor.saturating_sub(1),
@@ -182,6 +107,7 @@ impl App {
                     }
                     self.state = InputState::Normal;
                     self.terminal.enable_raw();
+                    write(&self.items).expect("write data");
                 },
                 _ => {},
             };
