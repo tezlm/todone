@@ -1,17 +1,15 @@
 mod tui;
 mod items;
+mod files;
 use items::{TodoItem, Recursive};
-use tui::{Terminal, Key};
-use std::{io, fs};
-
-const TODO_PATH: &str = ".todos";
+use tui::{Terminal, Input, Key};
 
 #[derive(PartialEq)]
 enum InputState { Normal, Append, Insert, Edit }
 
 struct App {
     state: InputState,
-    input: String,
+    input: Input,
     terminal: Terminal,
     cursor: usize,
     items: Vec<TodoItem>,
@@ -26,7 +24,7 @@ impl App {
     pub fn default() -> Self {
         Self {
             state: InputState::Normal,
-            input: String::new(),
+            input: Input::new(),
             terminal: Terminal::new(),
             cursor: 0,
             items: Vec::new(),
@@ -52,7 +50,8 @@ impl App {
             };
             term.move_to(2, pos);
             term.clear_line();
-            term.write(&format!("[ ] {}", self.input));
+            term.write(&format!("[ ] {}", self.input.data()));
+            term.move_to(6 + self.input.cursor(), pos);
         } else if self.len() > 1 {
             term.move_to(0, self.cursor);
             term.write("> ");
@@ -65,27 +64,27 @@ impl App {
         if self.state == InputState::Normal {
             match key {
                 Key::Char('a') => {
-                    self.input = String::new();
-                    self.terminal.disable_raw();
+                    self.input = Input::new();
                     self.state = InputState::Append;
+                    self.terminal.show_cursor();
                 },
                 // Key::Char('i') => {
                 //     self.input = Some(Input::default());
                 //     self.state = InputState::Insert;
                 // },
                 Key::Char('e') => {
-                    // self.input = self.items.get(self.cursor).unwrap().name.to_string();
-                    // self.terminal.disable_raw();
-                    // self.state = InputState::Edit;
+                    self.input = Input::from(&self.items.get(self.cursor).unwrap().name);
+                    self.state = InputState::Edit;
+                    self.terminal.show_cursor();
                 },
                 Key::Char('d') => {
                     self.remove(self.cursor);
                     self.cursor = self.cursor.min(self.len().saturating_sub(2));
-                    write(&self.items).expect("write data");
+                    files::write(&self.items);
                 },
                 Key::Char('x') => { 
                     self.get_mut(self.cursor).unwrap().done ^= true;
-                    write(&self.items).expect("write data");
+                    files::write(&self.items);
                 },
                 Key::Up        => self.cursor = self.cursor.saturating_sub(1),
                 Key::Down      => self.cursor = self.cursor.saturating_add(1).min(self.len().saturating_sub(2)),
@@ -93,12 +92,11 @@ impl App {
 
             };
         } else {
+            self.input.handle(key);
             match key {
-                Key::Char(c)   => { self.input.push(c); },
-                Key::Backspace => { self.input.pop(); },
                 Key::Enter | Key::Esc => {
                     if key == Key::Enter {
-                        let name = self.input.to_string();
+                        let name = self.input.data();
                         match self.state {
                             InputState::Append => { self.items.push(TodoItem { name, done: false, req: vec![] }); },
                             InputState::Edit => { self.items.get_mut(self.cursor).unwrap().name = name },
@@ -106,8 +104,8 @@ impl App {
                         }
                     }
                     self.state = InputState::Normal;
-                    self.terminal.enable_raw();
-                    write(&self.items).expect("write data");
+                    self.terminal.hide_cursor();
+                    files::write(&self.items);
                 },
                 _ => {},
             };
@@ -115,14 +113,13 @@ impl App {
     }
 
     pub fn run(&mut self) {
-        self.items = read();
-        self.terminal.enable_raw();
-        // terminal.show_cursor().unwrap();
+        self.items = files::read();
         loop {
-            // terminal.draw(|frame| self.ui(frame)).unwrap();
             self.ui();
             if let Some(event) = self.terminal.read() {
-                if event == Key::Char('q') { break }
+                if self.state == InputState::Normal && event == Key::Char('q') {
+                    break;
+                }
                 self.input(event);
             }
         }
@@ -152,16 +149,6 @@ fn render_items(items: &Vec<TodoItem>, depth: usize) -> String {
         .collect();
 
     vec.join("")
-}
-
-fn write(items: &Vec<TodoItem>) -> Result<(), io::Error> {
-    fs::write(TODO_PATH, serde_json::to_string(items)?)?;
-    Ok(())
-}
-
-fn read() -> Vec<TodoItem> {
-    let items = fs::read_to_string(TODO_PATH).unwrap_or("[]".into());
-    serde_json::from_str(&items).expect("parse json")
 }
 
 fn main() {
